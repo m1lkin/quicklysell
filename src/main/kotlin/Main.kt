@@ -14,12 +14,16 @@ import org.bukkit.inventory.ItemStack
 import org.bukkit.plugin.java.JavaPlugin
 import net.milkbowl.vault.economy.Economy
 import org.bukkit.plugin.RegisteredServiceProvider
+import org.bukkit.scheduler.BukkitRunnable
+import org.bukkit.scheduler.BukkitTask
+
 
 class QuickSellPlugin : JavaPlugin(), Listener {
 
     private val sellMenus = mutableMapOf<Player, Inventory>()
     private lateinit var priceConfig: FileConfiguration
     private lateinit var economy: Economy
+    private val priceUpdateTasks = mutableMapOf<Player, BukkitTask>()
 
     override fun onEnable() {
         if (!setupEconomy()) {
@@ -91,16 +95,10 @@ class QuickSellPlugin : JavaPlugin(), Listener {
                 in 45..52 -> {
                     event.isCancelled = true
                 }
-                else -> {
-                    Bukkit.getScheduler().runTask(this) {
-                        updatePriceButton(clickedInventory, player)
-                    }
-                }
+                else -> schedulePriceUpdate(player, clickedInventory)
             }
         } else if (event.view.topInventory == sellMenus[player]) {
-            Bukkit.getScheduler().runTask(this) {
-                updatePriceButton(event.view.topInventory, player)
-            }
+            schedulePriceUpdate(player, event.view.topInventory)
         }
     }
 
@@ -108,10 +106,18 @@ class QuickSellPlugin : JavaPlugin(), Listener {
     fun onInventoryDrag(event: InventoryDragEvent) {
         val player = event.whoClicked as? Player ?: return
         if (event.inventory == sellMenus[player]) {
-            Bukkit.getScheduler().runTask(this) {
-                updatePriceButton(event.inventory, player)
-            }
+            schedulePriceUpdate(player, event.inventory)
         }
+    }
+
+    private fun schedulePriceUpdate(player: Player, inventory: Inventory) {
+        priceUpdateTasks[player]?.cancel()
+        priceUpdateTasks[player] = object : BukkitRunnable() {
+            override fun run() {
+                updatePriceButton(inventory, player)
+                priceUpdateTasks.remove(player)
+            }
+        }.runTaskLater(this, 5)
     }
 
     @EventHandler
@@ -119,6 +125,8 @@ class QuickSellPlugin : JavaPlugin(), Listener {
         val player = event.player as Player
         val inventory = sellMenus.remove(player) ?: return
         returnItems(player, inventory)
+        priceUpdateTasks[player]?.cancel()
+        priceUpdateTasks.remove(player)
     }
 
     private fun sellItems(player: Player) {
