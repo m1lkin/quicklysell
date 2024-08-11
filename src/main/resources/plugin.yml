@@ -8,11 +8,17 @@ commands:
   quicksell:
     description: Opens menu to sell items
     usage: /quicksell
+  quickselladd:
+    description: Add item from main hand to config
+    usage: /quickselladd <price>
   quicksellreload:
     description: Reload items prices
     usage: /quicksellreload
 permissions:
   quicksell.reload:
     description: Allows to reload config with prices
+    default: op
+  quicksell.add:
+    description: Allows to add items to sell
     default: op
 author: m1lkin

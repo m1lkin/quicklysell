@@ -53,7 +53,10 @@ class QuickSellPlugin : JavaPlugin(), Listener {
         inventory.setItem(53, createButton(Material.EMERALD_BLOCK, "§a§lПродать все"))
         inventory.setItem(45, createButton(Material.BOOK, "§e§lИнформация о продаже",
             "§7Положите предметы в", "§7инвентарь для продажи", "§7Нажмите 'Продать все'", "§7чтобы продать предметы"))
-        updatePriceButton(inventory)
+        updatePriceButton(inventory, player)
+        for (i in 47 until 53) {
+            inventory.setItem(i, createButton(Material.STAINED_GLASS_PANE, " "))
+        }
 
         player.openInventory(inventory)
         sellMenus[player] = inventory
@@ -68,8 +71,8 @@ class QuickSellPlugin : JavaPlugin(), Listener {
         return button
     }
 
-    private fun updatePriceButton(inventory: Inventory) {
-        val totalValue = calculateTotalValue(inventory)
+    private fun updatePriceButton(inventory: Inventory, player: Player) {
+        val totalValue = calculateTotalValue(inventory, player)
         inventory.setItem(46, createButton(Material.GOLD_NUGGET, "§6§lТекущая стоимость",
             "§7Стоимость предметов:", "§e$totalValue"))
     }
@@ -85,18 +88,18 @@ class QuickSellPlugin : JavaPlugin(), Listener {
                     event.isCancelled = true
                     sellItems(player)
                 }
-                45, 46 -> {
+                in 45..52 -> {
                     event.isCancelled = true
                 }
                 else -> {
                     Bukkit.getScheduler().runTask(this) {
-                        updatePriceButton(clickedInventory)
+                        updatePriceButton(clickedInventory, player)
                     }
                 }
             }
         } else if (event.view.topInventory == sellMenus[player]) {
             Bukkit.getScheduler().runTask(this) {
-                updatePriceButton(event.view.topInventory)
+                updatePriceButton(event.view.topInventory, player)
             }
         }
     }
@@ -106,7 +109,7 @@ class QuickSellPlugin : JavaPlugin(), Listener {
         val player = event.whoClicked as? Player ?: return
         if (event.inventory == sellMenus[player]) {
             Bukkit.getScheduler().runTask(this) {
-                updatePriceButton(event.inventory)
+                updatePriceButton(event.inventory, player)
             }
         }
     }
@@ -120,7 +123,7 @@ class QuickSellPlugin : JavaPlugin(), Listener {
 
     private fun sellItems(player: Player) {
         val inventory = sellMenus[player] ?: return
-        val totalValue = calculateTotalValue(inventory)
+        val totalValue = calculateTotalValue(inventory, player)
 
         for (i in 0 until 45) {
             inventory.clear(i)
@@ -128,24 +131,34 @@ class QuickSellPlugin : JavaPlugin(), Listener {
 
         economy.depositPlayer(player, totalValue)
         player.sendMessage("§aВы продали предметы на сумму: $totalValue")
-        updatePriceButton(inventory)
+        updatePriceButton(inventory, player)
+        player.closeInventory()
     }
 
-    private fun calculateTotalValue(inventory: Inventory): Double {
+    private fun calculateTotalValue(inventory: Inventory, player: Player): Double {
         var totalValue = 0.0
         for (i in 0 until 45) {
             val item = inventory.getItem(i) ?: continue
+            val amount = calculateItemValue(item)
+            if (amount == 0.0) {
+                inventory.setItem(i, null)
+                val leftover = player.inventory.addItem(item)
+                if (leftover.isNotEmpty()) {
+                    player.world.dropItem(player.location, leftover[0]!!)
+                }
+            }
             totalValue += calculateItemValue(item)
         }
         return totalValue
     }
 
     private fun calculateItemValue(item: ItemStack): Double {
-        val itemName = item.itemMeta?.displayName ?: item.type.name.lowercase()
+        val unitPrice: Double
 
-        var unitPrice = priceConfig.getDouble("prices.named.$itemName", -1.0)
-
-        if (unitPrice == -1.0) {
+        if (item.itemMeta.hasDisplayName()) {
+            val itemName = item.itemMeta?.displayName
+            unitPrice = priceConfig.getDouble("prices.named.$itemName", 0.0)
+        } else {
             unitPrice = priceConfig.getDouble("prices.type.${item.type.name.lowercase()}", 0.0)
         }
 
@@ -169,6 +182,19 @@ class QuickSellPlugin : JavaPlugin(), Listener {
                 openSellMenu(sender)
                 return true
             }
+            command.name.equals("quickselladd", ignoreCase = true) && sender.hasPermission("quicksell.add") -> {
+                if (args.isEmpty() || args.size > 1 ) {
+                    sender.sendMessage("Неправильное кол-во аргументов")
+                    return false
+                }
+                val value = args[0].toDoubleOrNull()
+                if (value == null) {
+                    sender.sendMessage("Введите правильную стоимость")
+                    return false
+                }
+                addItem(sender as Player, value)
+                return true
+            }
             command.name.equals("quicksellreload", ignoreCase = true) && sender.hasPermission("quicksell.reload") -> {
                 reloadPriceConfig()
                 sender.sendMessage("§aЦены на продажу предметов перезагружены.")
@@ -176,6 +202,22 @@ class QuickSellPlugin : JavaPlugin(), Listener {
             }
         }
         return false
+    }
+
+    private fun addItem(player: Player, value: Double) {
+        val item = player.inventory.itemInMainHand
+
+        if (item != null && Material.AIR != item.type) {
+            if (item.itemMeta.hasDisplayName()) {
+                priceConfig.set("prices.named.${item.itemMeta.displayName}", value)
+            } else {
+                priceConfig.set("prices.type.${item.type.name.lowercase()}", value)
+            }
+            saveConfig()
+            player.sendMessage("§aПредмет добавлен на продажу!")
+        } else {
+            player.sendMessage("В руке ничего нет.")
+        }
     }
 
     private fun reloadPriceConfig() {
