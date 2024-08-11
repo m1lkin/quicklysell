@@ -1,0 +1,18 @@
+name: QuicklySell
+version: 1.0
+main: com.m1lkin.quicklysell.QuickSellPlugin
+api-version: 1.12
+description: A plugin for quickly selling items.
+depend: [Vault]
+commands:
+  quicksell:
+    description: Opens menu to sell items
+    usage: /quicksell
+  quicksellreload:
+    description: Reload items prices
+    usage: /quicksellreload
+permissions:
+  quicksell.reload:
+    description: Allows to reload config with prices
+    default: op
+author: m1lkin

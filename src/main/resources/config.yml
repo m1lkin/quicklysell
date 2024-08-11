@@ -1,0 +1,8 @@
+prices:
+  type:
+    diamond: 100.0
+    gold_ingot: 50.0
+    iron_ingot: 20.0
+  named:
+    "Легендарный меч": 1000.0
+    "Броня Лича": 500.0

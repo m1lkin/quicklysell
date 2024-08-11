@@ -1,0 +1,185 @@
+package com.m1lkin.quicklysell
+
+import org.bukkit.Bukkit
+import org.bukkit.Material
+import org.bukkit.configuration.file.FileConfiguration
+import org.bukkit.entity.Player
+import org.bukkit.event.EventHandler
+import org.bukkit.event.Listener
+import org.bukkit.event.inventory.InventoryClickEvent
+import org.bukkit.event.inventory.InventoryCloseEvent
+import org.bukkit.event.inventory.InventoryDragEvent
+import org.bukkit.inventory.Inventory
+import org.bukkit.inventory.ItemStack
+import org.bukkit.plugin.java.JavaPlugin
+import net.milkbowl.vault.economy.Economy
+import org.bukkit.plugin.RegisteredServiceProvider
+
+class QuickSellPlugin : JavaPlugin(), Listener {
+
+    private val sellMenus = mutableMapOf<Player, Inventory>()
+    private lateinit var priceConfig: FileConfiguration
+    private lateinit var economy: Economy
+
+    override fun onEnable() {
+        if (!setupEconomy()) {
+            logger.severe("Vault не найден! Отключение плагина.")
+            server.pluginManager.disablePlugin(this)
+            return
+        }
+
+        server.pluginManager.registerEvents(this, this)
+        loadPriceConfig()
+    }
+
+    private fun setupEconomy(): Boolean {
+        if (server.pluginManager.getPlugin("Vault") == null) {
+            return false
+        }
+        val rsp: RegisteredServiceProvider<Economy> = server.servicesManager.getRegistration(Economy::class.java)
+            ?: return false
+        economy = rsp.provider
+        return true
+    }
+
+    private fun loadPriceConfig() {
+        saveDefaultConfig()
+        priceConfig = config
+    }
+
+    private fun openSellMenu(player: Player) {
+        val inventory = Bukkit.createInventory(null, 54, "Продажа предметов")
+
+        inventory.setItem(53, createButton(Material.EMERALD_BLOCK, "§a§lПродать все"))
+        inventory.setItem(45, createButton(Material.BOOK, "§e§lИнформация о продаже",
+            "§7Положите предметы в", "§7инвентарь для продажи", "§7Нажмите 'Продать все'", "§7чтобы продать предметы"))
+        updatePriceButton(inventory)
+
+        player.openInventory(inventory)
+        sellMenus[player] = inventory
+    }
+
+    private fun createButton(material: Material, name: String, vararg lore: String): ItemStack {
+        val button = ItemStack(material)
+        val meta = button.itemMeta
+        meta?.displayName = name
+        meta?.lore = lore.toList()
+        button.itemMeta = meta
+        return button
+    }
+
+    private fun updatePriceButton(inventory: Inventory) {
+        val totalValue = calculateTotalValue(inventory)
+        inventory.setItem(46, createButton(Material.GOLD_NUGGET, "§6§lТекущая стоимость",
+            "§7Стоимость предметов:", "§e$totalValue"))
+    }
+
+    @EventHandler
+    fun onInventoryClick(event: InventoryClickEvent) {
+        val player = event.whoClicked as? Player ?: return
+        val clickedInventory = event.clickedInventory ?: return
+
+        if (clickedInventory == sellMenus[player]) {
+            when (event.slot) {
+                53 -> {
+                    event.isCancelled = true
+                    sellItems(player)
+                }
+                45, 46 -> {
+                    event.isCancelled = true
+                }
+                else -> {
+                    Bukkit.getScheduler().runTask(this) {
+                        updatePriceButton(clickedInventory)
+                    }
+                }
+            }
+        } else if (event.view.topInventory == sellMenus[player]) {
+            Bukkit.getScheduler().runTask(this) {
+                updatePriceButton(event.view.topInventory)
+            }
+        }
+    }
+
+    @EventHandler
+    fun onInventoryDrag(event: InventoryDragEvent) {
+        val player = event.whoClicked as? Player ?: return
+        if (event.inventory == sellMenus[player]) {
+            Bukkit.getScheduler().runTask(this) {
+                updatePriceButton(event.inventory)
+            }
+        }
+    }
+
+    @EventHandler
+    fun onInventoryClose(event: InventoryCloseEvent) {
+        val player = event.player as Player
+        val inventory = sellMenus.remove(player) ?: return
+        returnItems(player, inventory)
+    }
+
+    private fun sellItems(player: Player) {
+        val inventory = sellMenus[player] ?: return
+        val totalValue = calculateTotalValue(inventory)
+
+        for (i in 0 until 45) {
+            inventory.clear(i)
+        }
+
+        economy.depositPlayer(player, totalValue)
+        player.sendMessage("§aВы продали предметы на сумму: $totalValue")
+        updatePriceButton(inventory)
+    }
+
+    private fun calculateTotalValue(inventory: Inventory): Double {
+        var totalValue = 0.0
+        for (i in 0 until 45) {
+            val item = inventory.getItem(i) ?: continue
+            totalValue += calculateItemValue(item)
+        }
+        return totalValue
+    }
+
+    private fun calculateItemValue(item: ItemStack): Double {
+        val itemName = item.itemMeta?.displayName ?: item.type.name.lowercase()
+
+        var unitPrice = priceConfig.getDouble("prices.named.$itemName", -1.0)
+
+        if (unitPrice == -1.0) {
+            unitPrice = priceConfig.getDouble("prices.type.${item.type.name.lowercase()}", 0.0)
+        }
+
+        return unitPrice * item.amount
+    }
+
+    private fun returnItems(player: Player, inventory: Inventory) {
+        for (i in 0 until 45) {
+            val item = inventory.getItem(i) ?: continue
+            val leftover = player.inventory.addItem(item)
+            if (leftover.isNotEmpty()) {
+                player.world.dropItem(player.location, leftover[0]!!)
+            }
+        }
+        player.updateInventory()
+    }
+
+    override fun onCommand(sender: org.bukkit.command.CommandSender, command: org.bukkit.command.Command, label: String, args: Array<out String>): Boolean {
+        when {
+            command.name.equals("quicksell", ignoreCase = true) && sender is Player -> {
+                openSellMenu(sender)
+                return true
+            }
+            command.name.equals("quicksellreload", ignoreCase = true) && sender.hasPermission("quicksell.reload") -> {
+                reloadPriceConfig()
+                sender.sendMessage("§aЦены на продажу предметов перезагружены.")
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun reloadPriceConfig() {
+        reloadConfig()
+        priceConfig = config
+    }
+}
